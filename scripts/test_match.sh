@@ -11,10 +11,10 @@ NC='\033[0m' # No Color
 # 默认参数
 SERVER_BIN="./build/bin/match_server"
 CLIENT_BIN="./build/bin/match_client_app"
-NUM_CLIENTS=10
+NUM_CLIENTS=20
 SERVER_ADDRESS="127.0.0.1"
 SERVER_PORT=9090
-TEST_DURATION=60
+TEST_DURATION=20
 VERBOSE=false
 
 # 处理命令行参数
@@ -54,10 +54,10 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --server-bin FILE Server binary path (default: ./build/bin/match_server)"
             echo "  --client-bin FILE Client binary path (default: ./build/bin/match_client_app)"
-            echo "  --clients N       Number of clients to simulate (default: 10)"
+            echo "  --clients N       Number of clients to simulate (default: 20)"
             echo "  --address ADDR    Server address (default: 127.0.0.1)"
             echo "  --port PORT       Server port (default: 9090)"
-            echo "  --duration SEC    Test duration in seconds (default: 60)"
+            echo "  --duration SEC    Test duration in seconds (default: 20)"
             echo "  --verbose         Enable verbose output"
             echo "  --help            Display this help message"
             exit 0
@@ -135,8 +135,8 @@ fi
 # 启动服务器
 echo -e "${GREEN}Starting server...${NC}"
 LOG_FILE="$TEMP_DIR/server_output.log"
-echo "Running: $SERVER_BIN --address $SERVER_ADDRESS --port $SERVER_PORT --log-file $TEMP_DIR/test_server.log --log-level 0 --match-timeout 4000"
-$SERVER_BIN --address $SERVER_ADDRESS --port $SERVER_PORT --log-file $TEMP_DIR/test_server.log --log-level 0 --match-timeout 4000 > "$LOG_FILE" 2>&1 &
+echo "Running: $SERVER_BIN --address $SERVER_ADDRESS --port $SERVER_PORT --log-file $TEMP_DIR/test_server.log --log-level 0 --match-timeout 3000 --status-interval 2"
+$SERVER_BIN --address $SERVER_ADDRESS --port $SERVER_PORT --log-file $TEMP_DIR/test_server.log --log-level 0 --match-timeout 3000 --status-interval 2 > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 # 等待服务器启动
@@ -156,9 +156,24 @@ run_client_test() {
     local client_log="$TEMP_DIR/client_${client_id}.log"
     local client_input="$TEMP_DIR/client_${client_id}.in"
     
+    # 根据客户端ID计算评分，使评分分布更加多样化
+    # 分成几个评分组，以测试评分匹配算法
+    local rating
+    
+    # 前10个客户端评分在1000-1200之间
+    if [ $client_id -le 10 ]; then
+        rating=$(( 1000 + RANDOM % 200 ))
+    # 中间客户端评分在1400-1600之间
+    elif [ $client_id -le 15 ]; then
+        rating=$(( 1400 + RANDOM % 200 ))
+    # 高评分客户端在1800-2000之间
+    else
+        rating=$(( 1800 + RANDOM % 200 ))
+    fi
+    
     # 生成客户端输入文件 - 确保客户端多次尝试加入匹配队列
     cat > "$client_input" << EOF
-create Player${client_id} $(( 1000 + RANDOM % 500 ))
+create Player${client_id} ${rating}
 sleep 1
 join
 sleep 3
@@ -212,20 +227,45 @@ wait $SERVER_PID 2>/dev/null
 # 分析日志
 echo -e "${GREEN}Analyzing logs...${NC}"
 MATCH_COUNT=$(grep -c "Match [Ff]ound" "$LOG_FILE")
-JOINED_COUNT=$(grep -c "join.*match" "$LOG_FILE")
+JOINED_COUNT=$(grep -c "join.*match\|added to queue" "$LOG_FILE")
 PLAYER_COUNT=$(grep -c "Player created successfully" "$LOG_FILE")
+CREATED_ROOMS=$(grep -c "Room .* created" "$LOG_FILE")
+
+# 分析评分分布
+LOW_RATING_COUNT=$(grep -E "Player[0-9]+ \(1[0-1][0-9][0-9]\)" "$LOG_FILE" | wc -l)
+MID_RATING_COUNT=$(grep -E "Player[0-9]+ \(1[4-5][0-9][0-9]\)" "$LOG_FILE" | wc -l)
+HIGH_RATING_COUNT=$(grep -E "Player[0-9]+ \(1[8-9][0-9][0-9]|2000\)" "$LOG_FILE" | wc -l)
 
 echo -e "${GREEN}Test results:${NC}"
 echo "  Players created: $PLAYER_COUNT"
 echo "  Players joined queue: $JOINED_COUNT"
 echo "  Matches completed: $MATCH_COUNT"
+echo "  Rooms created: $CREATED_ROOMS"
+echo ""
+echo "  Rating distribution in matches:"
+echo "    Low rating (1000-1200): $LOW_RATING_COUNT players"
+echo "    Mid rating (1400-1600): $MID_RATING_COUNT players"
+echo "    High rating (1800-2000): $HIGH_RATING_COUNT players"
 
 if [ "$PLAYER_COUNT" -eq "$NUM_CLIENTS" ]; then
     echo -e "${GREEN}Player creation test passed!${NC}"
     
     if [ "$MATCH_COUNT" -gt 0 ]; then
         echo -e "${GREEN}Matching test passed!${NC}"
-        exit 0
+        # 计算匹配率
+        EXPECTED_MATCHES=$(($NUM_CLIENTS / 2))
+        MATCH_RATE=$(echo "scale=2; $MATCH_COUNT * 100 / $EXPECTED_MATCHES" | bc)
+        
+        echo "Match rate: $MATCH_RATE% ($MATCH_COUNT/$EXPECTED_MATCHES possible matches)"
+        
+        if [ $(echo "$MATCH_RATE >= 50" | bc) -eq 1 ]; then
+            echo -e "${GREEN}Match rate test passed!${NC}"
+            exit 0
+        else
+            echo -e "${YELLOW}Warning: Low match rate.${NC}"
+            echo "Check matchmaking algorithm and logs for details."
+            exit 0
+        fi
     else
         echo -e "${YELLOW}Warning: No matches found.${NC}"
         echo "Check matchmaking algorithm and logs for details."

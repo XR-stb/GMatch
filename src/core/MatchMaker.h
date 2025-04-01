@@ -26,6 +26,9 @@ public:
     RatingBasedStrategy(int maxRatingDiff = 300);
     bool isMatch(const PlayerPtr& player1, const PlayerPtr& player2) const override;
     
+    // 获取最大评分差异
+    int getMaxRatingDiff() const { return maxRatingDiff_; }
+    
 private:
     int maxRatingDiff_;
 };
@@ -42,6 +45,10 @@ public:
     
     void setMatchStrategy(std::shared_ptr<MatchStrategy> strategy);
     void clear();
+    
+    std::shared_ptr<MatchStrategy> getMatchStrategy() const {
+        return matchStrategy_;
+    }
     
 private:
     std::vector<PlayerPtr> queue_;
@@ -91,6 +98,16 @@ public:
     // 获取超时强制匹配状态
     bool getForceMatchOnTimeout() const {
         return forceMatchOnTimeout_;
+    }
+    
+    // 获取匹配超时阈值
+    uint64_t getMatchTimeoutThreshold() const {
+        return matchTimeoutThreshold_;
+    }
+    
+    // 获取当前使用的匹配策略
+    std::shared_ptr<MatchStrategy> getMatchStrategy() const {
+        return queue_.getMatchStrategy();
     }
     
     // 声明友元

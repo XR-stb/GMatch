@@ -221,4 +221,9 @@ void MatchServer::setMatchTimeoutThreshold(uint64_t ms) {
     matchManager.setMatchTimeoutThreshold(ms);
 }
 
+void MatchServer::printMatchmakingStatus(std::ostream& out) const {
+    auto& matchManager = MatchManager::getInstance();
+    matchManager.printMatchmakingStatus(out);
+}
+
 } // namespace gmatch 

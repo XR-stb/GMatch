@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
+#include <iostream>
 #include "Player.h"
 #include "MatchMaker.h"
 
@@ -62,6 +63,9 @@ public:
     size_t getQueueSize() const;
     size_t getPlayerCount() const;
     size_t getRoomCount() const;
+    
+    // 输出当前匹配系统状态
+    void printMatchmakingStatus(std::ostream& out = std::cout) const;
     
 private:
     MatchManager();

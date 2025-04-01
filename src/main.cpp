@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <execinfo.h>
+#include <ctime>
 #include "server/MatchServer.h"
 #include "util/Logger.h"
 #include "util/Config.h"
@@ -92,6 +93,7 @@ void showHelp(const char* programName) {
     std::cout << "  --log-level LEVEL  Log level (0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR, 4=FATAL) (default: 1)" << std::endl;
     std::cout << "  --no-force-match   Disable force match on timeout" << std::endl;
     std::cout << "  --match-timeout    Match timeout threshold in milliseconds (default: 5000)" << std::endl;
+    std::cout << "  --status-interval  Status interval in seconds (default: 0)" << std::endl;
     std::cout << "  --help             Display this help message" << std::endl;
 }
 
@@ -113,6 +115,7 @@ int main(int argc, char* argv[]) {
     bool configFileSpecified = false;
     bool forceMatchOnTimeout = true;  // 默认启用超时匹配
     uint64_t matchTimeoutThreshold = 5000;  // 默认超时阈值5秒
+    int statusInterval = 0;  // 默认不输出状态
     
     // 处理命令行参数
     for (int i = 1; i < argc; i++) {
@@ -143,6 +146,8 @@ int main(int argc, char* argv[]) {
             forceMatchOnTimeout = false;
         } else if (strcmp(argv[i], "--match-timeout") == 0 && i + 1 < argc) {
             matchTimeoutThreshold = static_cast<uint64_t>(std::stoi(argv[++i]));
+        } else if (strcmp(argv[i], "--status-interval") == 0 && i + 1 < argc) {
+            statusInterval = std::stoi(argv[++i]);
         } else {
             std::cerr << "Unknown option: " << argv[i] << std::endl;
             showHelp(argv[0]);
@@ -211,7 +216,16 @@ int main(int argc, char* argv[]) {
     LOG_INFO("Server is running. Press Ctrl+C to stop.");
     
     // 主线程等待，让工作线程继续运行
+    time_t lastStatusTime = 0;
     while (g_server->isRunning()) {
+        time_t now = time(nullptr);
+        
+        // 如果启用了状态输出，并且时间间隔已到，则输出匹配状态
+        if (statusInterval > 0 && (now - lastStatusTime >= statusInterval)) {
+            g_server->printMatchmakingStatus();
+            lastStatusTime = now;
+        }
+        
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     

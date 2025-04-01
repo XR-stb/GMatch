@@ -324,4 +324,98 @@ bool MatchManager::getForceMatchOnTimeout() const {
     return false;
 }
 
+void MatchManager::printMatchmakingStatus(std::ostream& out) const {
+    if (!initialized_ || !matchMaker_) {
+        out << "Matchmaking system not initialized" << std::endl;
+        return;
+    }
+    
+    // 基本信息
+    out << "\n==== Matchmaking Status ====\n";
+    
+    // 获取队列中的玩家
+    std::vector<PlayerPtr> queuedPlayers;
+    {
+        std::lock_guard<std::mutex> lock(playersMutex_);
+        for (const auto& pair : players_) {
+            if (pair.second->isInQueue()) {
+                queuedPlayers.push_back(pair.second);
+            }
+        }
+    }
+    
+    // 按照评分排序
+    std::sort(queuedPlayers.begin(), queuedPlayers.end(),
+        [](const PlayerPtr& a, const PlayerPtr& b) {
+            return a->getRating() < b->getRating();
+        });
+    
+    // 输出队列状态
+    out << "Queue: " << queuedPlayers.size() << " players waiting\n";
+    if (!queuedPlayers.empty()) {
+        out << "  ID  | Name             | Rating | Wait Time (ms)\n";
+        out << "------+------------------+--------+--------------\n";
+        
+        uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+            
+        for (const auto& player : queuedPlayers) {
+            uint64_t waitTime = now - player->getLastActivityTime();
+            
+            char idStr[10], ratingStr[10], waitTimeStr[15];
+            snprintf(idStr, sizeof(idStr), "%5lu", player->getId());
+            snprintf(ratingStr, sizeof(ratingStr), "%7d", player->getRating());
+            snprintf(waitTimeStr, sizeof(waitTimeStr), "%12lu", waitTime);
+            
+            out << "  " << idStr << " | ";
+            
+            // 限制名称长度为16个字符
+            std::string name = player->getName();
+            if (name.length() > 16) {
+                name = name.substr(0, 13) + "...";
+            } else {
+                name.append(16 - name.length(), ' ');
+            }
+            out << name << " | " << ratingStr << " | " << waitTimeStr << "\n";
+        }
+    }
+    
+    // 获取活跃房间
+    auto rooms = matchMaker_->getRooms();
+    out << "\nActive Rooms: " << rooms.size() << "\n";
+    
+    if (!rooms.empty()) {
+        out << "  Room ID | Players\n";
+        out << "---------+----------------------------------\n";
+        
+        for (const auto& room : rooms) {
+            auto players = room->getPlayers();
+            
+            char roomIdStr[10];
+            snprintf(roomIdStr, sizeof(roomIdStr), "%8lu", room->getId());
+            
+            out << "  " << roomIdStr << " | ";
+            
+            for (size_t i = 0; i < players.size(); ++i) {
+                if (i > 0) out << ", ";
+                out << players[i]->getName() << " (" << players[i]->getRating() << ")";
+            }
+            out << "\n";
+        }
+    }
+    
+    // 匹配配置信息
+    auto matchStrategy = matchMaker_->getMatchStrategy();
+    auto strategy = dynamic_cast<RatingBasedStrategy*>(matchStrategy.get());
+    int maxRatingDiff = strategy ? strategy->getMaxRatingDiff() : 0;
+    
+    out << "\nMatchmaking Config:\n";
+    out << "  Players per Room: " << matchMaker_->playersPerRoom_ << "\n";
+    out << "  Max Rating Diff: " << maxRatingDiff << "\n";
+    out << "  Force Match on Timeout: " << (matchMaker_->getForceMatchOnTimeout() ? "Yes" : "No") << "\n";
+    out << "  Match Timeout Threshold: " << matchMaker_->getMatchTimeoutThreshold() << "ms\n";
+    
+    out << "============================\n" << std::endl;
+}
+
 } // namespace gmatch 
