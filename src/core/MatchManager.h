@@ -49,6 +49,15 @@ public:
     // 匹配策略设置
     void setMaxRatingDifference(int maxDiff);
     
+    // 设置是否启用超时强制匹配
+    void setForceMatchOnTimeout(bool enable);
+    
+    // 设置超时强制匹配的阈值(毫秒)
+    void setMatchTimeoutThreshold(uint64_t ms);
+    
+    // 获取超时强制匹配状态
+    bool getForceMatchOnTimeout() const;
+    
     // 高级功能
     size_t getQueueSize() const;
     size_t getPlayerCount() const;

@@ -64,8 +64,7 @@ bool Config::saveToFile(const std::string& filename) const {
     }
     
     std::lock_guard<std::mutex> lock(mutex_);
-    file << "# GMatch Configuration File\n";
-    file << "# Generated on " << std::time(nullptr) << "\n\n";
+    file << "# GMatch Configuration File\n\n";
     
     for (const auto& pair : config_) {
         file << pair.first << " = ";

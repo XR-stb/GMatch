@@ -18,37 +18,30 @@ TcpConnection::TcpConnection(int socketFd, ConnectionId id)
 
 TcpConnection::~TcpConnection() {
     LOG_DEBUG("Destroying TcpConnection with ID %llu", id_);
-    disconnect();
+    // 断开连接但不触发回调，因为可能正在进行cleanup
+    disconnectWithoutCallback();
 }
 
-bool TcpConnection::send(const std::string& message) {
-    if (!connected_) {
-        LOG_DEBUG("Attempt to send to disconnected client %llu", id_);
-        return false;
-    }
+void TcpConnection::disconnectWithoutCallback() {
+    bool wasConnected = connected_.exchange(false);
+    LOG_DEBUG("Silent disconnecting client %llu (was connected: %d)", id_, wasConnected);
     
-    std::lock_guard<std::mutex> lock(writeMutex_);
-    
-    size_t totalSent = 0;
-    size_t messageSize = message.size();
-    const char* buffer = message.c_str();
-    
-    while (totalSent < messageSize) {
-        ssize_t sent = ::send(socketFd_, buffer + totalSent, messageSize - totalSent, 0);
-        if (sent <= 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 缓冲区已满，稍后重试
-                continue;
+    if (wasConnected) {
+        try {
+            LOG_DEBUG("Closing socket for client %llu", id_);
+            close(socketFd_);
+            
+            if (readThread_.joinable()) {
+                LOG_DEBUG("Joining read thread for client %llu", id_);
+                readThread_.join();
+                LOG_DEBUG("Read thread joined for client %llu", id_);
             }
-            LOG_ERROR("Send failed for client %llu: %s", id_, strerror(errno));
-            connected_ = false;
-            return false;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in silent disconnect for client %llu: %s", id_, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in silent disconnect for client %llu", id_);
         }
-        
-        totalSent += sent;
     }
-    
-    return true;
 }
 
 void TcpConnection::disconnect() {
@@ -86,6 +79,36 @@ void TcpConnection::disconnect() {
             LOG_ERROR("Unknown exception in disconnect for client %llu", id_);
         }
     }
+}
+
+bool TcpConnection::send(const std::string& message) {
+    if (!connected_) {
+        LOG_DEBUG("Attempt to send to disconnected client %llu", id_);
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(writeMutex_);
+    
+    size_t totalSent = 0;
+    size_t messageSize = message.size();
+    const char* buffer = message.c_str();
+    
+    while (totalSent < messageSize) {
+        ssize_t sent = ::send(socketFd_, buffer + totalSent, messageSize - totalSent, 0);
+        if (sent <= 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 缓冲区已满，稍后重试
+                continue;
+            }
+            LOG_ERROR("Send failed for client %llu: %s", id_, strerror(errno));
+            connected_ = false;
+            return false;
+        }
+        
+        totalSent += sent;
+    }
+    
+    return true;
 }
 
 void TcpConnection::startReading() {

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <thread>
 #include <chrono>
+#include <iostream>
 
 namespace gmatch {
 
@@ -40,7 +41,7 @@ void MatchQueue::removePlayer(Player::PlayerId playerId) {
     }
 }
 
-bool MatchQueue::tryMatchPlayers(std::vector<PlayerPtr>& matchedPlayers, int requiredPlayers) {
+bool MatchQueue::tryMatchPlayers(std::vector<PlayerPtr>& matchedPlayers, int requiredPlayers, bool forceMatchOnTimeout, uint64_t timeoutThreshold) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (queue_.size() < requiredPlayers) {
@@ -65,6 +66,27 @@ bool MatchQueue::tryMatchPlayers(std::vector<PlayerPtr>& matchedPlayers, int req
         
         if (canMatch) {
             matchedPlayers.push_back(queue_[i]);
+        }
+    }
+    
+    // 如果找不到足够匹配的玩家，但队列中有足够多的玩家，且启用了超时匹配
+    if (matchedPlayers.size() < requiredPlayers && queue_.size() >= requiredPlayers && forceMatchOnTimeout) {
+        // 获取当前时间
+        auto now = std::chrono::system_clock::now();
+        auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+            
+        // 检查第一个玩家的等待时间是否超过阈值
+        if (nowMs - queue_[0]->getLastActivityTime() > timeoutThreshold) {
+            std::cout << "Force matching due to timeout: " << 
+                         (nowMs - queue_[0]->getLastActivityTime()) << "ms > " << 
+                         timeoutThreshold << "ms" << std::endl;
+            
+            // 重置匹配列表，使用贪婪算法
+            matchedPlayers.clear();
+            for (size_t i = 0; i < requiredPlayers && i < queue_.size(); ++i) {
+                matchedPlayers.push_back(queue_[i]);
+            }
         }
     }
     
@@ -176,8 +198,30 @@ void MatchMaker::matchLoop() {
     while (running_) {
         std::vector<PlayerPtr> matchedPlayers;
         
-        if (queue_.tryMatchPlayers(matchedPlayers, playersPerRoom_)) {
-            createRoom(matchedPlayers);
+        if (queue_.tryMatchPlayers(matchedPlayers, playersPerRoom_, forceMatchOnTimeout_, matchTimeoutThreshold_)) {
+            auto room = createRoom(matchedPlayers);
+            
+            // 记录匹配成功的信息
+            std::string playerNames;
+            for (size_t i = 0; i < matchedPlayers.size(); ++i) {
+                if (i > 0) playerNames += ", ";
+                playerNames += matchedPlayers[i]->getName() + "(" + 
+                               std::to_string(matchedPlayers[i]->getRating()) + ")";
+            }
+            
+            std::cout << "Match found! Room " << room->getId() 
+                      << " with players: " << playerNames << std::endl;
+            
+            // 触发回调
+            if (matchNotifyCallback_) {
+                try {
+                    matchNotifyCallback_(room);
+                } catch (const std::exception& e) {
+                    std::cerr << "Exception in match notify callback: " << e.what() << std::endl;
+                } catch (...) {
+                    std::cerr << "Unknown exception in match notify callback" << std::endl;
+                }
+            }
         }
         
         // 避免CPU过度使用

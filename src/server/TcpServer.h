@@ -26,6 +26,7 @@ public:
     
     bool send(const std::string& message);
     void disconnect();
+    void disconnectWithoutCallback();  // 断开连接但不触发回调
     
     void setMessageCallback(MessageCallback callback) { messageCallback_ = callback; }
     void setDisconnectCallback(DisconnectCallback callback) { disconnectCallback_ = callback; }

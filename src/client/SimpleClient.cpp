@@ -107,7 +107,7 @@ int main(int argc, char* argv[]) {
             }
             
             if (name.empty()) {
-                std::cout << "Usage: create <name> <rating>" << std::endl;
+                std::cout << "Usage: create <n> <rating>" << std::endl;
                 continue;
             }
             
@@ -137,10 +137,19 @@ int main(int argc, char* argv[]) {
             client.getPlayerInfo();
         } else if (line == "queue") {
             client.getQueueStatus();
+        } else if (line.substr(0, 5) == "sleep") {
+            std::istringstream iss(line);
+            std::string cmd;
+            int seconds = 1;
+            iss >> cmd >> seconds;
+            std::this_thread::sleep_for(std::chrono::seconds(seconds));
         } else {
             std::cout << "Unknown command: " << line << std::endl;
             showHelp();
         }
+        
+        // 添加小延迟确保每个命令有时间处理
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
     client.disconnect();

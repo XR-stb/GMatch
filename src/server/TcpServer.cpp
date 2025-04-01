@@ -99,12 +99,12 @@ void TcpServer::stop() {
         LOG_DEBUG("Accept thread joined");
     }
     
-    // 关闭所有客户端连接
+    // 关闭所有客户端连接，但不触发回调，因为服务器正在关闭
     LOG_DEBUG("Closing all client connections");
     std::lock_guard<std::mutex> lock(connectionsMutex_);
     for (auto& pair : connections_) {
         LOG_DEBUG("Disconnecting client %llu", pair.first);
-        pair.second->disconnect();
+        pair.second->disconnectWithoutCallback();
     }
     connections_.clear();
     

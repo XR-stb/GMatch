@@ -20,6 +20,12 @@ public:
     void setPlayersPerRoom(int playersPerRoom);
     void setMaxRatingDifference(int maxDiff);
     
+    // 设置是否启用超时强制匹配
+    void setForceMatchOnTimeout(bool enable);
+    
+    // 设置超时强制匹配的阈值(毫秒)
+    void setMatchTimeoutThreshold(uint64_t ms);
+    
     void setLogLevel(LogLevel level);
     void setLogFile(const std::string& filename);
     

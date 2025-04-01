@@ -211,4 +211,14 @@ void MatchServer::onPlayerStatusChanged(Player::PlayerId playerId, bool inQueue)
     }
 }
 
+void MatchServer::setForceMatchOnTimeout(bool enable) {
+    auto& matchManager = MatchManager::getInstance();
+    matchManager.setForceMatchOnTimeout(enable);
+}
+
+void MatchServer::setMatchTimeoutThreshold(uint64_t ms) {
+    auto& matchManager = MatchManager::getInstance();
+    matchManager.setMatchTimeoutThreshold(ms);
+}
+
 } // namespace gmatch 

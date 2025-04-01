@@ -14,6 +14,9 @@ using namespace gmatch;
 // 全局服务器实例
 std::unique_ptr<MatchServer> g_server;
 
+// 跟踪是否已经在处理信号中
+static std::atomic<bool> g_handlingSignal(false);
+
 // 检查命令行是否包含特定选项
 bool hasOption(char* argv[], int argc, const char* option);
 
@@ -38,6 +41,15 @@ void print_trace() {
 
 // 信号处理
 void signalHandler(int signal) {
+    // 防止递归调用
+    bool expected = false;
+    if (!g_handlingSignal.compare_exchange_strong(expected, true)) {
+        // 已经在处理信号中，直接退出
+        std::cerr << "Warning: Signal " << signal << " received while handling another signal, forcing exit\n";
+        _exit(1);  // 强制退出，不调用任何析构函数
+        return;
+    }
+    
     if (signal == SIGSEGV || signal == SIGABRT) {
         std::cerr << "Received signal " << signal << " (";
         if (signal == SIGSEGV) std::cerr << "SIGSEGV";
@@ -46,17 +58,24 @@ void signalHandler(int signal) {
         print_trace();
     }
 
-    LOG_INFO("Received signal %d, shutting down...", signal);
+    std::cerr << "Received signal " << signal << ", shutting down..." << std::endl;
+    
     if (g_server) {
-        g_server->stop();
+        try {
+            g_server->stop();
+        } catch (...) {
+            std::cerr << "Error stopping server" << std::endl;
+        }
     }
     
     // 如果是终止信号，正常退出
     if (signal == SIGINT || signal == SIGTERM) {
+        std::cerr << "Normal termination" << std::endl;
         exit(0);
     } else {
-        // 如果是崩溃信号，生成core文件
-        std::abort();
+        // 如果是崩溃信号，退出但不生成更多信号
+        std::cerr << "Abnormal termination" << std::endl;
+        _exit(1);  // 使用_exit而不是abort()，避免生成额外的SIGABRT
     }
 }
 
@@ -71,6 +90,8 @@ void showHelp(const char* programName) {
     std::cout << "  --max-diff NUM     Max rating difference (default: 300)" << std::endl;
     std::cout << "  --log-file FILE    Log file path (default: match_server.log)" << std::endl;
     std::cout << "  --log-level LEVEL  Log level (0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR, 4=FATAL) (default: 1)" << std::endl;
+    std::cout << "  --no-force-match   Disable force match on timeout" << std::endl;
+    std::cout << "  --match-timeout    Match timeout threshold in milliseconds (default: 5000)" << std::endl;
     std::cout << "  --help             Display this help message" << std::endl;
 }
 
@@ -90,6 +111,8 @@ int main(int argc, char* argv[]) {
     std::string logFile = "match_server.log";
     LogLevel logLevel = LogLevel::INFO;
     bool configFileSpecified = false;
+    bool forceMatchOnTimeout = true;  // 默认启用超时匹配
+    uint64_t matchTimeoutThreshold = 5000;  // 默认超时阈值5秒
     
     // 处理命令行参数
     for (int i = 1; i < argc; i++) {
@@ -116,6 +139,10 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "Invalid log level: " << level << ". Using default." << std::endl;
             }
+        } else if (strcmp(argv[i], "--no-force-match") == 0) {
+            forceMatchOnTimeout = false;
+        } else if (strcmp(argv[i], "--match-timeout") == 0 && i + 1 < argc) {
+            matchTimeoutThreshold = static_cast<uint64_t>(std::stoi(argv[++i]));
         } else {
             std::cerr << "Unknown option: " << argv[i] << std::endl;
             showHelp(argv[0]);
@@ -173,6 +200,8 @@ int main(int argc, char* argv[]) {
     g_server = std::make_unique<MatchServer>(address, port);
     g_server->setPlayersPerRoom(playersPerRoom);
     g_server->setMaxRatingDifference(maxRatingDiff);
+    g_server->setForceMatchOnTimeout(forceMatchOnTimeout);
+    g_server->setMatchTimeoutThreshold(matchTimeoutThreshold);
     
     if (!g_server->start()) {
         LOG_FATAL("Failed to start server");

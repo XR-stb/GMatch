@@ -25,6 +25,20 @@ void MatchManager::init(int playersPerRoom) {
         auto strategy = std::make_shared<RatingBasedStrategy>(300);
         matchMaker_->setMatchStrategy(strategy);
         
+        // 设置匹配通知回调
+        matchMaker_->setMatchNotifyCallback([this](const RoomPtr& room) {
+            if (matchNotifyCallback_) {
+                try {
+                    LOG_DEBUG("Room %llu created, notifying callback", room->getId());
+                    matchNotifyCallback_(room);
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Exception in match notify callback: %s", e.what());
+                } catch (...) {
+                    LOG_ERROR("Unknown exception in match notify callback");
+                }
+            }
+        });
+        
         // 启动匹配线程
         matchMaker_->start();
         initialized_ = true;
@@ -74,25 +88,36 @@ void MatchManager::removePlayer(Player::PlayerId playerId) {
     
     PlayerPtr player;
     bool playerExists = false;
+    bool wasInQueue = false;
     
     // 首先获取并检查玩家是否存在
-    {
+    try {
         std::lock_guard<std::mutex> lock(playersMutex_);
         auto it = players_.find(playerId);
         if (it != players_.end()) {
             player = it->second;
             playerExists = true;
+            // 记录玩家是否在队列中，避免后续获取时可能发生的竞态
+            wasInQueue = player->isInQueue();
+            
+            // 在持有锁的情况下直接移除玩家，避免后续操作中玩家被其他线程修改
+            players_.erase(it);
+            LOG_DEBUG("Removed player %llu from player list", playerId);
         } else {
             LOG_WARNING("Player %llu not found when trying to remove", playerId);
             return;
         }
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception accessing player %llu: %s", playerId, e.what());
+        return;
+    } catch (...) {
+        LOG_ERROR("Unknown exception accessing player %llu", playerId);
+        return;
     }
     
     // 如果玩家在队列中，尝试从队列中移除
-    bool wasInQueue = false;
-    if (playerExists && player && player->isInQueue() && matchMaker_) {
+    if (playerExists && wasInQueue && matchMaker_) {
         try {
-            wasInQueue = true;
             // 从匹配队列移除，但不改变玩家状态
             matchMaker_->removePlayer(playerId);
             LOG_DEBUG("Removed player %llu from queue", playerId);
@@ -105,14 +130,13 @@ void MatchManager::removePlayer(Player::PlayerId playerId) {
     
     // 手动更新玩家状态，这应该在MatchMaker::removePlayer之后设置
     if (playerExists && player && wasInQueue) {
-        player->setStatus(false);
-    }
-    
-    // 最后从玩家映射中移除
-    {
-        std::lock_guard<std::mutex> lock(playersMutex_);
-        players_.erase(playerId);
-        LOG_DEBUG("Removed player %llu from player list", playerId);
+        try {
+            player->setStatus(false);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception setting player %llu status: %s", playerId, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception setting player %llu status", playerId);
+        }
     }
     
     // 如果玩家原本在队列中，触发状态变更回调
@@ -279,6 +303,25 @@ size_t MatchManager::getRoomCount() const {
     }
     
     return matchMaker_->getRooms().size();
+}
+
+void MatchManager::setForceMatchOnTimeout(bool enable) {
+    if (matchMaker_) {
+        matchMaker_->setForceMatchOnTimeout(enable);
+    }
+}
+
+void MatchManager::setMatchTimeoutThreshold(uint64_t ms) {
+    if (matchMaker_) {
+        matchMaker_->setMatchTimeoutThreshold(ms);
+    }
+}
+
+bool MatchManager::getForceMatchOnTimeout() const {
+    if (matchMaker_) {
+        return matchMaker_->getForceMatchOnTimeout();
+    }
+    return false;
 }
 
 } // namespace gmatch 
