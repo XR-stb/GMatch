@@ -95,6 +95,10 @@ if [ "$CLEAN_BUILD" = true ] && [ -d "$BUILD_DIR" ]; then
 fi
 
 mkdir -p "$BUILD_DIR"
+
+# 获取项目根目录
+PROJECT_ROOT=$(pwd)
+
 cd "$BUILD_DIR" || { echo -e "${RED}Failed to enter build directory${NC}"; exit 1; }
 
 # 运行 CMake 配置
@@ -173,5 +177,8 @@ if [ "$INSTALL" = true ]; then
     
     echo -e "${GREEN}Installation completed successfully${NC}"
 fi
+
+# 返回项目根目录
+cd "$PROJECT_ROOT" || { echo -e "${RED}Failed to return to project root${NC}"; exit 1; }
 
 echo -e "${GREEN}All done!${NC}" 
