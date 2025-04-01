@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 # 默认参数
 CLIENT_BIN="./build/bin/match_client_app"
 SERVER_ADDRESS="127.0.0.1"
-SERVER_PORT=8080
+SERVER_PORT=9090
 
 # 处理命令行参数
 while [[ $# -gt 0 ]]; do
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --bin FILE        Client binary path (default: ./build/bin/match_client_app)"
             echo "  --address ADDR    Server address (default: 127.0.0.1)"
-            echo "  --port PORT       Server port (default: 8080)"
+            echo "  --port PORT       Server port (default: 9090)"
             echo "  --help            Display this help message"
             exit 0
             ;;

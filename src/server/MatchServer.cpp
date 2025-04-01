@@ -22,6 +22,15 @@ MatchServer::MatchServer(const std::string& address, uint16_t port) {
         onClientDisconnected(conn);
     });
     
+    // 设置玩家创建回调
+    static_cast<JsonRequestHandler*>(requestHandler_.get())->setPlayerCreatedCallback(
+        [this](TcpConnection::ConnectionId clientId, Player::PlayerId playerId) {
+            std::lock_guard<std::mutex> lock(clientMapMutex_);
+            clientPlayerMap_[clientId] = playerId;
+            LOG_DEBUG("Mapped client %llu to player %llu", clientId, playerId);
+        }
+    );
+    
     // 初始化匹配管理器
     auto& matchManager = MatchManager::getInstance();
     matchManager.init();
@@ -116,14 +125,25 @@ void MatchServer::onClientDisconnected(const TcpConnectionPtr& conn) {
         auto it = clientPlayerMap_.find(conn->getId());
         if (it != clientPlayerMap_.end()) {
             playerId = it->second;
+            LOG_DEBUG("Found player %llu for client %llu, removing mapping", playerId, conn->getId());
             clientPlayerMap_.erase(it);
+        } else {
+            LOG_DEBUG("No player mapping found for client %llu", conn->getId());
+            return;  // 如果没有关联的玩家，直接返回
         }
     }
     
     // 在释放map锁后再调用removePlayer，避免死锁
     if (playerId > 0) {
         try {
-            MatchManager::getInstance().removePlayer(playerId);
+            LOG_DEBUG("Removing player %llu from MatchManager", playerId);
+            auto& matchManager = MatchManager::getInstance();
+            if (!matchManager.getPlayer(playerId)) {
+                LOG_WARNING("Player %llu already removed or not found", playerId);
+                return;
+            }
+            matchManager.removePlayer(playerId);
+            LOG_DEBUG("Player %llu successfully removed", playerId);
         } catch (const std::exception& e) {
             LOG_ERROR("Exception when removing player %llu: %s", playerId, e.what());
         } catch (...) {

@@ -5,113 +5,29 @@
 #include <unistd.h>
 #include <cstring>
 #include <iostream>
+#include <stdexcept>
 #include "../util/Logger.h"
 
 namespace gmatch {
 
-// TcpConnection实现
-TcpConnection::TcpConnection(int socketFd, ConnectionId id)
-    : socketFd_(socketFd), id_(id) {
-}
-
-TcpConnection::~TcpConnection() {
-    disconnect();
-}
-
-bool TcpConnection::send(const std::string& message) {
-    if (!connected_) {
-        return false;
-    }
-    
-    std::lock_guard<std::mutex> lock(writeMutex_);
-    
-    size_t totalSent = 0;
-    size_t messageSize = message.size();
-    const char* buffer = message.c_str();
-    
-    while (totalSent < messageSize) {
-        ssize_t sent = ::send(socketFd_, buffer + totalSent, messageSize - totalSent, 0);
-        if (sent <= 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 缓冲区已满，稍后重试
-                continue;
-            }
-            connected_ = false;
-            return false;
-        }
-        
-        totalSent += sent;
-    }
-    
-    return true;
-}
-
-void TcpConnection::disconnect() {
-    bool wasConnected = connected_.exchange(false);
-    if (wasConnected) {
-        close(socketFd_);
-        
-        if (readThread_.joinable()) {
-            readThread_.join();
-        }
-        
-        // 只在之前是连接状态的情况下调用回调，避免重复调用
-        if (disconnectCallback_) {
-            disconnectCallback_(id_);
-        }
-    }
-}
-
-void TcpConnection::startReading() {
-    readThread_ = std::thread(&TcpConnection::readLoop, this);
-}
-
-void TcpConnection::readLoop() {
-    const size_t bufferSize = 4096;
-    char buffer[bufferSize];
-    
-    while (connected_) {
-        std::memset(buffer, 0, bufferSize);
-        ssize_t bytesRead = recv(socketFd_, buffer, bufferSize - 1, 0);
-        
-        if (bytesRead > 0) {
-            if (messageCallback_) {
-                messageCallback_(id_, std::string(buffer, bytesRead));
-            }
-        } else if (bytesRead == 0) {
-            // 客户端关闭连接
-            break;
-        } else {
-            // 错误
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                break;
-            }
-        }
-    }
-    
-    // 确保我们只调用一次disconnect回调
-    bool expected = true;
-    if (connected_.compare_exchange_strong(expected, false)) {
-        close(socketFd_);
-        if (disconnectCallback_) {
-            disconnectCallback_(id_);
-        }
-    }
-}
-
 // TcpServer实现
 TcpServer::TcpServer(const std::string& address, uint16_t port)
     : address_(address), port_(port) {
+    LOG_DEBUG("Creating TcpServer at %s:%d", address.c_str(), port);
 }
 
 TcpServer::~TcpServer() {
+    LOG_DEBUG("Destroying TcpServer");
     stop();
 }
 
 bool TcpServer::start() {
     if (running_) {
+        LOG_DEBUG("TcpServer already running");
         return true;
     }
+    
+    LOG_DEBUG("Starting TcpServer");
     
     // 创建服务器socket
     serverSocket_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -162,25 +78,32 @@ bool TcpServer::start() {
 
 void TcpServer::stop() {
     if (!running_) {
+        LOG_DEBUG("TcpServer already stopped");
         return;
     }
     
+    LOG_DEBUG("Stopping TcpServer");
     running_ = false;
     
     // 关闭服务器socket
     if (serverSocket_ >= 0) {
+        LOG_DEBUG("Closing server socket");
         close(serverSocket_);
         serverSocket_ = -1;
     }
     
     // 等待接受线程结束
     if (acceptThread_.joinable()) {
+        LOG_DEBUG("Joining accept thread");
         acceptThread_.join();
+        LOG_DEBUG("Accept thread joined");
     }
     
     // 关闭所有客户端连接
+    LOG_DEBUG("Closing all client connections");
     std::lock_guard<std::mutex> lock(connectionsMutex_);
     for (auto& pair : connections_) {
+        LOG_DEBUG("Disconnecting client %llu", pair.first);
         pair.second->disconnect();
     }
     connections_.clear();
@@ -192,25 +115,31 @@ bool TcpServer::sendToClient(TcpConnection::ConnectionId clientId, const std::st
     std::lock_guard<std::mutex> lock(connectionsMutex_);
     auto it = connections_.find(clientId);
     if (it != connections_.end() && it->second->isConnected()) {
+        LOG_DEBUG("Sending message to client %llu", clientId);
         return it->second->send(message);
     }
+    LOG_DEBUG("Client %llu not found or not connected", clientId);
     return false;
 }
 
 void TcpServer::broadcastMessage(const std::string& message) {
+    LOG_DEBUG("Broadcasting message to all clients");
     std::lock_guard<std::mutex> lock(connectionsMutex_);
     for (auto& pair : connections_) {
         if (pair.second->isConnected()) {
+            LOG_DEBUG("Broadcasting to client %llu", pair.first);
             pair.second->send(message);
         }
     }
 }
 
 void TcpServer::acceptLoop() {
+    LOG_DEBUG("Accept loop started");
     while (running_) {
         struct sockaddr_in clientAddr;
         socklen_t clientAddrLen = sizeof(clientAddr);
         
+        LOG_DEBUG("Waiting for new connections");
         int clientSocket = accept(serverSocket_, (struct sockaddr*)&clientAddr, &clientAddrLen);
         if (clientSocket < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && running_) {
@@ -219,12 +148,18 @@ void TcpServer::acceptLoop() {
             continue;
         }
         
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
+        LOG_DEBUG("New connection from %s:%d", clientIP, ntohs(clientAddr.sin_port));
+        
         handleNewConnection(clientSocket);
     }
+    LOG_DEBUG("Accept loop ended");
 }
 
 void TcpServer::handleNewConnection(int clientSocket) {
     auto clientId = nextClientId_++;
+    LOG_DEBUG("Handling new connection, assigned ID %llu", clientId);
     
     auto connection = std::make_shared<TcpConnection>(clientSocket, clientId);
     connection->setMessageCallback(
@@ -239,10 +174,19 @@ void TcpServer::handleNewConnection(int clientSocket) {
     {
         std::lock_guard<std::mutex> lock(connectionsMutex_);
         connections_[clientId] = connection;
+        LOG_DEBUG("Added client %llu to connections map", clientId);
     }
     
     if (connectionCallback_) {
-        connectionCallback_(connection);
+        try {
+            LOG_DEBUG("Calling connection callback for client %llu", clientId);
+            connectionCallback_(connection);
+            LOG_DEBUG("Connection callback completed for client %llu", clientId);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in connection callback for client %llu: %s", clientId, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in connection callback for client %llu", clientId);
+        }
     }
     
     connection->startReading();
@@ -256,28 +200,57 @@ void TcpServer::handleClientMessage(TcpConnection::ConnectionId clientId, const 
         auto it = connections_.find(clientId);
         if (it != connections_.end()) {
             connection = it->second;
+            LOG_DEBUG("Found connection for client %llu", clientId);
+        } else {
+            LOG_DEBUG("Connection not found for client %llu", clientId);
         }
     }
     
     if (connection && messageCallback_) {
-        messageCallback_(connection, message);
+        try {
+            LOG_DEBUG("Calling message callback for client %llu", clientId);
+            messageCallback_(connection, message);
+            LOG_DEBUG("Message callback completed for client %llu", clientId);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in message callback for client %llu: %s", clientId, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in message callback for client %llu", clientId);
+        }
     }
 }
 
 void TcpServer::handleClientDisconnect(TcpConnection::ConnectionId clientId) {
+    LOG_DEBUG("Handling client disconnect for client %llu", clientId);
     TcpConnectionPtr connection;
     
-    {
-        std::lock_guard<std::mutex> lock(connectionsMutex_);
-        auto it = connections_.find(clientId);
-        if (it != connections_.end()) {
-            connection = it->second;
-            connections_.erase(it);
+    try {
+        {
+            std::lock_guard<std::mutex> lock(connectionsMutex_);
+            auto it = connections_.find(clientId);
+            if (it != connections_.end()) {
+                LOG_DEBUG("Found connection for client %llu, removing from map", clientId);
+                connection = it->second;
+                connections_.erase(it);
+            } else {
+                LOG_DEBUG("Connection not found for client %llu", clientId);
+            }
         }
-    }
-    
-    if (connection && closeCallback_) {
-        closeCallback_(connection);
+        
+        if (connection && closeCallback_) {
+            try {
+                LOG_DEBUG("Calling close callback for client %llu", clientId);
+                closeCallback_(connection);
+                LOG_DEBUG("Close callback completed for client %llu", clientId);
+            } catch (const std::exception& e) {
+                LOG_ERROR("Exception in close callback for client %llu: %s", clientId, e.what());
+            } catch (...) {
+                LOG_ERROR("Unknown exception in close callback for client %llu", clientId);
+            }
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception in handleClientDisconnect for client %llu: %s", clientId, e.what());
+    } catch (...) {
+        LOG_ERROR("Unknown exception in handleClientDisconnect for client %llu", clientId);
     }
 }
 

@@ -23,7 +23,7 @@ MatchQueue::MatchQueue()
 
 void MatchQueue::addPlayer(const PlayerPtr& player) {
     std::lock_guard<std::mutex> lock(mutex_);
-    player->setStatus(true);
+    // 不修改玩家状态，只添加到队列
     queue_.push_back(player);
 }
 
@@ -35,7 +35,7 @@ void MatchQueue::removePlayer(Player::PlayerId playerId) {
         });
     
     if (it != queue_.end()) {
-        (*it)->setStatus(false);
+        // 不修改玩家状态，只从队列中移除
         queue_.erase(it);
     }
 }

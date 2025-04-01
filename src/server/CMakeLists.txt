@@ -1,6 +1,7 @@
 set(SERVER_SOURCES
     MatchServer.cpp
     TcpServer.cpp
+    TcpConnection.cpp
     RequestHandler.cpp
 )
 

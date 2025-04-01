@@ -6,7 +6,8 @@
 // 简单的JSON解析与生成，在实际环境中可以使用第三方库如nlohmann/json或RapidJSON
 namespace gmatch {
 
-JsonRequestHandler::JsonRequestHandler() {
+JsonRequestHandler::JsonRequestHandler() 
+    : onPlayerCreatedCallback_(nullptr) {
     // 注册默认命令处理器
     registerCommandHandler("create_player", [this](const std::string& data, TcpConnection::ConnectionId clientId) {
         return handleCreatePlayer(data, clientId);
@@ -109,6 +110,8 @@ std::string JsonRequestHandler::handleCreatePlayer(const std::string& data, TcpC
     std::string name = "Player";
     int rating = 1500;
     
+    LOG_DEBUG("Handling create_player request from client %llu", clientId);
+    
     // 简单的数据解析
     size_t namePos = data.find("\"name\"");
     size_t ratingPos = data.find("\"rating\"");
@@ -127,6 +130,7 @@ std::string JsonRequestHandler::handleCreatePlayer(const std::string& data, TcpC
                        nameValue.end());
         if (!nameValue.empty()) {
             name = nameValue;
+            LOG_DEBUG("Parsed player name: %s", name.c_str());
         }
     }
     
@@ -144,24 +148,57 @@ std::string JsonRequestHandler::handleCreatePlayer(const std::string& data, TcpC
                          ratingValue.end());
         try {
             rating = std::stoi(ratingValue);
+            LOG_DEBUG("Parsed player rating: %d", rating);
         } catch (...) {
+            LOG_WARNING("Failed to parse rating value '%s', using default", ratingValue.c_str());
             // 使用默认评分
         }
     }
     
     // 创建玩家
-    auto& matchManager = MatchManager::getInstance();
-    auto player = matchManager.createPlayer(name, rating);
-    
-    if (player) {
-        std::ostringstream oss;
-        oss << "{\"player_id\":" << player->getId() 
-            << ",\"name\":\"" << player->getName() 
-            << "\",\"rating\":" << player->getRating() << "}";
+    try {
+        auto& matchManager = MatchManager::getInstance();
+        auto player = matchManager.createPlayer(name, rating);
         
-        return createJsonResponse("create_player", true, "Player created successfully", oss.str());
-    } else {
-        return createJsonResponse("create_player", false, "Failed to create player", "");
+        if (player) {
+            LOG_DEBUG("Player created: ID=%llu, Name=%s, Rating=%d", 
+                     player->getId(), player->getName().c_str(), player->getRating());
+            
+            // 建立客户端与玩家的映射关系
+            if (onPlayerCreatedCallback_) {
+                try {
+                    LOG_DEBUG("Calling player created callback for client %llu, player %llu", 
+                             clientId, player->getId());
+                    onPlayerCreatedCallback_(clientId, player->getId());
+                    LOG_DEBUG("Player created callback completed");
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Exception in player created callback: %s", e.what());
+                } catch (...) {
+                    LOG_ERROR("Unknown exception in player created callback");
+                }
+            } else {
+                LOG_WARNING("No player created callback registered!");
+            }
+            
+            std::ostringstream oss;
+            oss << "{\"player_id\":" << player->getId() 
+                << ",\"name\":\"" << player->getName() 
+                << "\",\"rating\":" << player->getRating() << "}";
+            
+            std::string response = createJsonResponse("create_player", true, "Player created successfully", oss.str());
+            LOG_DEBUG("create_player response: %s", response.c_str());
+            return response;
+        } else {
+            LOG_ERROR("Failed to create player");
+            return createJsonResponse("create_player", false, "Failed to create player", "");
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception creating player: %s", e.what());
+        return createJsonResponse("create_player", false, 
+                                std::string("Exception creating player: ") + e.what(), "");
+    } catch (...) {
+        LOG_ERROR("Unknown exception creating player");
+        return createJsonResponse("create_player", false, "Unknown exception creating player", "");
     }
 }
 

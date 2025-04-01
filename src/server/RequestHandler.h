@@ -19,6 +19,7 @@ public:
 class JsonRequestHandler : public RequestHandler {
 public:
     using CommandHandler = std::function<std::string(const std::string&, TcpConnection::ConnectionId)>;
+    using PlayerCreatedCallback = std::function<void(TcpConnection::ConnectionId, Player::PlayerId)>;
     
     JsonRequestHandler();
     
@@ -27,6 +28,11 @@ public:
     
     // 注册命令处理器
     void registerCommandHandler(const std::string& command, CommandHandler handler);
+    
+    // 设置玩家创建回调
+    void setPlayerCreatedCallback(PlayerCreatedCallback callback) {
+        onPlayerCreatedCallback_ = callback;
+    }
     
 private:
     // 解析JSON请求
@@ -37,6 +43,9 @@ private:
     
     // 命令处理映射表
     std::unordered_map<std::string, CommandHandler> commandHandlers_;
+    
+    // 玩家创建回调
+    PlayerCreatedCallback onPlayerCreatedCallback_;
     
     // 默认命令处理方法
     std::string handleCreatePlayer(const std::string& data, TcpConnection::ConnectionId clientId);

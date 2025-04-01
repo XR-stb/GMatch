@@ -1,5 +1,7 @@
 #include "MatchManager.h"
 #include <chrono>
+#include <stdexcept>
+#include "../util/Logger.h"
 
 namespace gmatch {
 
@@ -65,46 +67,77 @@ PlayerPtr MatchManager::getPlayer(Player::PlayerId playerId) {
 }
 
 void MatchManager::removePlayer(Player::PlayerId playerId) {
-    // 获取玩家对象，确保它存在
+    if (!initialized_) {
+        LOG_WARNING("Trying to remove player %llu but MatchManager is not initialized", playerId);
+        return;
+    }
+    
     PlayerPtr player;
+    bool playerExists = false;
+    
+    // 首先获取并检查玩家是否存在
     {
         std::lock_guard<std::mutex> lock(playersMutex_);
         auto it = players_.find(playerId);
-        if (it == players_.end()) {
-            // 玩家不存在，无需处理
+        if (it != players_.end()) {
+            player = it->second;
+            playerExists = true;
+        } else {
+            LOG_WARNING("Player %llu not found when trying to remove", playerId);
             return;
         }
-        player = it->second;
     }
     
-    // 先尝试从匹配队列移除
-    if (matchMaker_ && player->isInQueue()) {
-        matchMaker_->removePlayer(playerId);
-        
-        // 确保玩家状态正确
-        player->setStatus(false);
-        
-        // 触发回调
-        if (playerStatusCallback_) {
-            playerStatusCallback_(playerId, false);
+    // 如果玩家在队列中，尝试从队列中移除
+    bool wasInQueue = false;
+    if (playerExists && player && player->isInQueue() && matchMaker_) {
+        try {
+            wasInQueue = true;
+            // 从匹配队列移除，但不改变玩家状态
+            matchMaker_->removePlayer(playerId);
+            LOG_DEBUG("Removed player %llu from queue", playerId);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception removing player %llu from queue: %s", playerId, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception removing player %llu from queue", playerId);
         }
     }
     
-    // 然后从玩家列表移除
+    // 手动更新玩家状态，这应该在MatchMaker::removePlayer之后设置
+    if (playerExists && player && wasInQueue) {
+        player->setStatus(false);
+    }
+    
+    // 最后从玩家映射中移除
     {
         std::lock_guard<std::mutex> lock(playersMutex_);
         players_.erase(playerId);
+        LOG_DEBUG("Removed player %llu from player list", playerId);
+    }
+    
+    // 如果玩家原本在队列中，触发状态变更回调
+    if (wasInQueue && playerStatusCallback_) {
+        try {
+            playerStatusCallback_(playerId, false);
+            LOG_DEBUG("Triggered status callback for player %llu", playerId);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in player status callback for %llu: %s", playerId, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in player status callback for %llu", playerId);
+        }
     }
 }
 
 bool MatchManager::joinMatchmaking(Player::PlayerId playerId) {
     PlayerPtr player = getPlayer(playerId);
     if (!player || !matchMaker_) {
+        LOG_WARNING("Player %llu not found or matchmaker not initialized", playerId);
         return false;
     }
     
     // 玩家已经在队列中
     if (player->isInQueue()) {
+        LOG_DEBUG("Player %llu is already in queue", playerId);
         return false;
     }
     
@@ -113,12 +146,35 @@ bool MatchManager::joinMatchmaking(Player::PlayerId playerId) {
         std::chrono::system_clock::now().time_since_epoch()).count();
     player->updateActivity(now);
     
+    LOG_DEBUG("Adding player %llu to matchmaking queue", playerId);
+    
+    // 首先更新玩家状态
+    player->setStatus(true);
+    
     // 添加到匹配队列
-    matchMaker_->addPlayer(player);
+    try {
+        matchMaker_->addPlayer(player);
+        LOG_DEBUG("Player %llu added to queue", playerId);
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception adding player %llu to queue: %s", playerId, e.what());
+        player->setStatus(false);  // 如果添加失败，恢复状态
+        return false;
+    } catch (...) {
+        LOG_ERROR("Unknown exception adding player %llu to queue", playerId);
+        player->setStatus(false);  // 如果添加失败，恢复状态
+        return false;
+    }
     
     // 触发回调
     if (playerStatusCallback_) {
-        playerStatusCallback_(playerId, true);
+        try {
+            LOG_DEBUG("Triggering player status callback for %llu", playerId);
+            playerStatusCallback_(playerId, true);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in player status callback: %s", e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in player status callback");
+        }
     }
     
     return true;
@@ -127,11 +183,13 @@ bool MatchManager::joinMatchmaking(Player::PlayerId playerId) {
 bool MatchManager::leaveMatchmaking(Player::PlayerId playerId) {
     PlayerPtr player = getPlayer(playerId);
     if (!player || !matchMaker_) {
+        LOG_WARNING("Player %llu not found or matchmaker not initialized", playerId);
         return false;
     }
     
     // 玩家不在队列中
     if (!player->isInQueue()) {
+        LOG_DEBUG("Player %llu is not in queue", playerId);
         return false;
     }
     
@@ -140,12 +198,25 @@ bool MatchManager::leaveMatchmaking(Player::PlayerId playerId) {
         std::chrono::system_clock::now().time_since_epoch()).count();
     player->updateActivity(now);
     
-    // 从匹配队列移除
+    LOG_DEBUG("Removing player %llu from matchmaking queue", playerId);
+    
+    // 从匹配队列移除（不修改玩家状态）
     matchMaker_->removePlayer(playerId);
+    
+    // 手动更新玩家状态
+    player->setStatus(false);
+    LOG_DEBUG("Player %llu status updated to not in queue", playerId);
     
     // 触发回调
     if (playerStatusCallback_) {
-        playerStatusCallback_(playerId, false);
+        try {
+            LOG_DEBUG("Triggering player status callback for %llu", playerId);
+            playerStatusCallback_(playerId, false);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in player status callback: %s", e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in player status callback");
+        }
     }
     
     return true;

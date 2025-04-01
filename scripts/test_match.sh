@@ -13,7 +13,7 @@ SERVER_BIN="./build/bin/match_server"
 CLIENT_BIN="./build/bin/match_client_app"
 NUM_CLIENTS=10
 SERVER_ADDRESS="127.0.0.1"
-SERVER_PORT=8080
+SERVER_PORT=9090
 TEST_DURATION=30
 VERBOSE=false
 
@@ -56,7 +56,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --client-bin FILE Client binary path (default: ./build/bin/match_client_app)"
             echo "  --clients N       Number of clients to simulate (default: 10)"
             echo "  --address ADDR    Server address (default: 127.0.0.1)"
-            echo "  --port PORT       Server port (default: 8080)"
+            echo "  --port PORT       Server port (default: 9090)"
             echo "  --duration SEC    Test duration in seconds (default: 30)"
             echo "  --verbose         Enable verbose output"
             echo "  --help            Display this help message"
@@ -108,19 +108,45 @@ log_file = $TEMP_DIR/test_server.log
 log_level = 0
 EOF
 
+# 先检查是否有进程占用端口，如果有则杀死
+echo -e "${YELLOW}Checking if port $SERVER_PORT is in use...${NC}"
+PORT_PID=$(lsof -t -i:$SERVER_PORT 2>/dev/null)
+if [ -n "$PORT_PID" ]; then
+    echo -e "${YELLOW}Port $SERVER_PORT is in use by PID $PORT_PID, killing...${NC}"
+    kill -15 $PORT_PID 2>/dev/null
+    sleep 2
+    
+    # 再次检查是否仍在运行
+    if kill -0 $PORT_PID 2>/dev/null; then
+        echo -e "${YELLOW}Process still alive, force killing...${NC}"
+        kill -9 $PORT_PID 2>/dev/null
+        sleep 2
+    fi
+    
+    # 最后检查端口是否真的释放
+    if lsof -i:$SERVER_PORT &>/dev/null; then
+        echo -e "${RED}Failed to free port $SERVER_PORT, please check manually.${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}Successfully freed port $SERVER_PORT${NC}"
+    fi
+fi
+
 # 启动服务器
 echo -e "${GREEN}Starting server...${NC}"
 LOG_FILE="$TEMP_DIR/server_output.log"
-$SERVER_BIN > "$LOG_FILE" 2>&1 &
+echo "Running: $SERVER_BIN --address $SERVER_ADDRESS --port $SERVER_PORT --log-file $TEMP_DIR/test_server.log --log-level 0"
+$SERVER_BIN --address $SERVER_ADDRESS --port $SERVER_PORT --log-file $TEMP_DIR/test_server.log --log-level 0 > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 # 等待服务器启动
 echo -e "${YELLOW}Waiting for server to start...${NC}"
-sleep 2
+sleep 3  # 增加等待时间，确保服务器完全启动
 
 # 检查服务器是否正在运行
 if ! ps -p $SERVER_PID > /dev/null; then
     echo -e "${RED}Server failed to start. Check $LOG_FILE for details${NC}"
+    cat "$LOG_FILE"
     exit 1
 fi
 
