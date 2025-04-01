@@ -10,51 +10,10 @@
 #include <thread>
 #include "Player.h"
 #include "Room.h"
+#include "MatchQueue.h"
+#include "MatchStrategy.h"
 
 namespace gmatch {
-
-// 匹配策略接口
-class MatchStrategy {
-public:
-    virtual ~MatchStrategy() = default;
-    virtual bool isMatch(const PlayerPtr& player1, const PlayerPtr& player2) const = 0;
-};
-
-// 基于评分差异的匹配策略
-class RatingBasedStrategy : public MatchStrategy {
-public:
-    RatingBasedStrategy(int maxRatingDiff = 300);
-    bool isMatch(const PlayerPtr& player1, const PlayerPtr& player2) const override;
-    
-    // 获取最大评分差异
-    int getMaxRatingDiff() const { return maxRatingDiff_; }
-    
-private:
-    int maxRatingDiff_;
-};
-
-// 匹配队列
-class MatchQueue {
-public:
-    MatchQueue();
-    void addPlayer(const PlayerPtr& player);
-    void removePlayer(Player::PlayerId playerId);
-    bool tryMatchPlayers(std::vector<PlayerPtr>& matchedPlayers, int requiredPlayers, 
-                        bool forceMatchOnTimeout = false, uint64_t timeoutThreshold = 5000);
-    size_t size() const;
-    
-    void setMatchStrategy(std::shared_ptr<MatchStrategy> strategy);
-    void clear();
-    
-    std::shared_ptr<MatchStrategy> getMatchStrategy() const {
-        return matchStrategy_;
-    }
-    
-private:
-    std::vector<PlayerPtr> queue_;
-    std::shared_ptr<MatchStrategy> matchStrategy_;
-    mutable std::mutex mutex_;
-};
 
 // 匹配器
 class MatchMaker {
