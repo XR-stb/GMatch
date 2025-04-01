@@ -1,0 +1,40 @@
+# 构建目录，二进制文件不上传仓库
+build/
+
+# python脚本运行生成字节码文件
+scripts/python/__pycache__
+
+# cmake 生成 compile_commands.json 时的文件
+compile_commands.json
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# cmake . 产生的全部服务的makefile文件
+Makefile
+
+# clangd 缓存
+.cache/
+
+# proto生成的文件
+*.pb.cc
+*.pb.h
+*.pb.go
+
+# bazel
+MODULE.bazel.lock
+
+# python
+.pyenv
+
+# vscode
+.vscode/
+
+# cmake fetchContent deps
+_deps/
+
+logs/
+
+scripts/shell/out
+
+.idea
