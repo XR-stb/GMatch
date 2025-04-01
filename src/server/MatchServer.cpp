@@ -110,11 +110,25 @@ void MatchServer::onClientDisconnected(const TcpConnectionPtr& conn) {
     LOG_INFO("Client disconnected: %llu", conn->getId());
     
     // 如果客户端有关联的玩家，清理相关资源
-    std::lock_guard<std::mutex> lock(clientMapMutex_);
-    auto it = clientPlayerMap_.find(conn->getId());
-    if (it != clientPlayerMap_.end()) {
-        MatchManager::getInstance().removePlayer(it->second);
-        clientPlayerMap_.erase(it);
+    Player::PlayerId playerId = 0;
+    {
+        std::lock_guard<std::mutex> lock(clientMapMutex_);
+        auto it = clientPlayerMap_.find(conn->getId());
+        if (it != clientPlayerMap_.end()) {
+            playerId = it->second;
+            clientPlayerMap_.erase(it);
+        }
+    }
+    
+    // 在释放map锁后再调用removePlayer，避免死锁
+    if (playerId > 0) {
+        try {
+            MatchManager::getInstance().removePlayer(playerId);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception when removing player %llu: %s", playerId, e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception when removing player %llu", playerId);
+        }
     }
 }
 

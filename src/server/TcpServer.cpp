@@ -47,14 +47,15 @@ bool TcpConnection::send(const std::string& message) {
 }
 
 void TcpConnection::disconnect() {
-    if (connected_) {
-        connected_ = false;
+    bool wasConnected = connected_.exchange(false);
+    if (wasConnected) {
         close(socketFd_);
         
         if (readThread_.joinable()) {
             readThread_.join();
         }
         
+        // 只在之前是连接状态的情况下调用回调，避免重复调用
         if (disconnectCallback_) {
             disconnectCallback_(id_);
         }
@@ -88,9 +89,13 @@ void TcpConnection::readLoop() {
         }
     }
     
-    connected_ = false;
-    if (disconnectCallback_) {
-        disconnectCallback_(id_);
+    // 确保我们只调用一次disconnect回调
+    bool expected = true;
+    if (connected_.compare_exchange_strong(expected, false)) {
+        close(socketFd_);
+        if (disconnectCallback_) {
+            disconnectCallback_(id_);
+        }
     }
 }
 

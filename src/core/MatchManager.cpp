@@ -65,14 +65,36 @@ PlayerPtr MatchManager::getPlayer(Player::PlayerId playerId) {
 }
 
 void MatchManager::removePlayer(Player::PlayerId playerId) {
+    // 获取玩家对象，确保它存在
+    PlayerPtr player;
+    {
+        std::lock_guard<std::mutex> lock(playersMutex_);
+        auto it = players_.find(playerId);
+        if (it == players_.end()) {
+            // 玩家不存在，无需处理
+            return;
+        }
+        player = it->second;
+    }
+    
     // 先尝试从匹配队列移除
-    if (matchMaker_) {
+    if (matchMaker_ && player->isInQueue()) {
         matchMaker_->removePlayer(playerId);
+        
+        // 确保玩家状态正确
+        player->setStatus(false);
+        
+        // 触发回调
+        if (playerStatusCallback_) {
+            playerStatusCallback_(playerId, false);
+        }
     }
     
     // 然后从玩家列表移除
-    std::lock_guard<std::mutex> lock(playersMutex_);
-    players_.erase(playerId);
+    {
+        std::lock_guard<std::mutex> lock(playersMutex_);
+        players_.erase(playerId);
+    }
 }
 
 bool MatchManager::joinMatchmaking(Player::PlayerId playerId) {
