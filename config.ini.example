@@ -1,0 +1,21 @@
+[server]
+# 服务器配置
+address = 0.0.0.0
+port = 8080
+
+[match]
+# 匹配配置
+players_per_room = 2
+max_rating_diff = 300
+match_interval_ms = 1000
+
+[queue]
+# 队列配置
+max_queue_size = 1000
+queue_timeout_s = 300
+
+[log]
+# 日志配置
+log_file = match_server.log
+# 日志级别: 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR, 4=FATAL
+log_level = 1 
