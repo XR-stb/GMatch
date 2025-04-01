@@ -38,3 +38,7 @@ logs/
 scripts/shell/out
 
 .idea
+
+test_output/
+
+*.log
